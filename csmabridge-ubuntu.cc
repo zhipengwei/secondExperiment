@@ -43,6 +43,86 @@ using namespace ns3;
 using namespace std;
 NS_LOG_COMPONENT_DEFINE ("CsmaBridgeExample");
 
+//static void
+//CwndChange (uint32_t oldCwnd, uint32_t newCwnd)
+//{
+//  NS_LOG_UNCOND ( index << Simulator::Now ().GetSeconds () << "\t" << newCwnd);
+//}
+
+static void
+CwndChange (std::string context, uint32_t oldCwnd, uint32_t newCwnd)
+{
+  //NS_LOG_UNCOND (context << "\t" << Simulator::Now ().GetSeconds () << "\t" << newCwnd);
+  cout << context << "\t" << Simulator::Now ().GetSeconds () << "\t" << newCwnd << endl;
+}
+
+//static void
+//RxDrop (Ptr<const Packet> p)
+//{
+//  NS_LOG_UNCOND ("RxDrop at " << Simulator::Now ().GetSeconds ());
+//}
+
+// The following are queue related tracing functions.
+// Packet drop event
+static void 
+AsciiDropEvent (std::string path, Ptr<const QueueItem> packet)
+{
+  //NS_LOG_UNCOND ("PacketDrop:\t" << Simulator::Now ().GetNanoSeconds () << "\t" << path << "\t" << *packet);
+  cout << "PacketDrop:\t" << Simulator::Now ().GetNanoSeconds () << "\t" << path << "\t" << *packet << endl;
+//  cout << "aaa" << endl;
+//  *os << "d " << Simulator::Now ().GetSeconds () << " ";
+//  *os << path << " " << *packet << std::endl;
+}
+// Enqueue event
+static void 
+AsciiEnqueueEvent (std::string path, Ptr<const QueueItem> packet)
+{
+  //NS_LOG_UNCOND ("Enqueue\t" << Simulator::Now ().GetNanoSeconds () << "\t" << *packet << *(packet->GetPacket()) );
+  cout << "Enqueue\t" << Simulator::Now ().GetNanoSeconds () << endl;
+ // *os << "+ " << Simulator::Now ().GetSeconds () << " ";
+ // *os << path << " " << *packet << std::endl;
+}
+
+// Dequeue event
+static void 
+AsciiDequeueEvent (std::string path, Ptr<const QueueItem> packet)
+{
+  // NS_LOG_UNCOND ("Dequeue\t" << Simulator::Now ().GetNanoSeconds () << "\t" << *(packet->GetPacket()) );
+  // NS_LOG_UNCOND ("Dequeue\t" << Simulator::Now ().GetNanoSeconds () );
+  cout << "Dequeue\t" << Simulator::Now ().GetNanoSeconds () << endl;
+ // *os << "+ " << Simulator::Now ().GetSeconds () << " ";
+ // *os << path << " " << *packet << std::endl;
+}
+
+// Dequeue event net device
+static void 
+AsciiDequeueEventNetDevice (std::string path, Ptr<const Packet> packet)
+{
+  // NS_LOG_UNCOND ("Dequeue\t" << Simulator::Now ().GetNanoSeconds () << "\t" << *(packet->GetPacket()) );
+  // NS_LOG_UNCOND ("Dequeue\t" << Simulator::Now ().GetNanoSeconds () );
+  cout << "Dequeue\t" << Simulator::Now ().GetNanoSeconds () << endl;
+ // *os << "+ " << Simulator::Now ().GetSeconds () << " ";
+ // *os << path << " " << *packet << std::endl;
+}
+
+static void 
+AsciiPacketsInQueue (std::string path, uint32_t oldValue, uint32_t newValue) 
+{
+  //NS_LOG_UNCOND ("BytesInQueue\t" << Simulator::Now ().GetNanoSeconds () << "\t" << newValue);
+  cout << "BytesInQueue\t" << Simulator::Now ().GetNanoSeconds () << "\t" << newValue << endl;
+ // *os << "+ " << Simulator::Now ().GetSeconds () << " ";
+ // *os << path << " " << *packet << std::endl;
+}
+
+static void 
+AsciiPacketsInQueueNetDevice (std::string path, uint32_t oldValue, uint32_t newValue) 
+{
+  //NS_LOG_UNCOND ("BytesInQueueNetDevice\t" << Simulator::Now ().GetNanoSeconds () << "\t" << newValue);
+  cout << "BytesInQueueNetDevice\t" << Simulator::Now ().GetNanoSeconds () << "\t" << newValue << endl;
+ // *os << "+ " << Simulator::Now ().GetSeconds () << " ";
+ // *os << path << " " << *packet << std::endl;
+}
+
 // This is the application defined in another class, this definition will allow us to hook the congestion window.
 class MyApp : public Application 
 {
@@ -51,7 +131,7 @@ public:
   MyApp ();
   virtual ~MyApp();
 
-  void Setup (Ptr<Socket> socket, Address address, uint32_t packetSize, uint32_t nPackets, DataRate dataRate, uint32_t numberPacketsPerFlow, double mean, double bound);
+  void Setup (Ptr<Socket> socket, Address address, uint32_t packetSize, uint32_t nPackets, DataRate dataRate, uint32_t numberPacketsPerFlow, double mean, double bound, double interval_threshold);
 
 private:
   virtual void StartApplication (void);
@@ -71,6 +151,8 @@ private:
 
   uint32_t 	  m_numberPacketsPerFlow;
   uint32_t        m_numberPacketsPerFlowCnt;
+
+  double 	  m_threshold;
   Ptr<ExponentialRandomVariable> x;
 };
 
@@ -94,7 +176,7 @@ MyApp::~MyApp()
 }
 
 void
-MyApp::Setup (Ptr<Socket> socket, Address address, uint32_t packetSize, uint32_t nPackets, DataRate dataRate, uint32_t numberPacketsPerFlow, double mean, double bound)
+MyApp::Setup (Ptr<Socket> socket, Address address, uint32_t packetSize, uint32_t nPackets, DataRate dataRate, uint32_t numberPacketsPerFlow, double mean, double bound, double threshold)
 {
   m_socket = socket;
   m_peer = address;
@@ -106,6 +188,8 @@ MyApp::Setup (Ptr<Socket> socket, Address address, uint32_t packetSize, uint32_t
   //x->SetAttribute ("Bound", DoubleValue(bound));
 
   m_numberPacketsPerFlow = numberPacketsPerFlow;
+  
+  m_threshold = threshold;
 }
 
 void
@@ -158,7 +242,23 @@ MyApp::ScheduleTx (void)
       //tNext = Seconds (m_packetSize * 8 / static_cast<double> (m_dataRate.GetBitRate ()) + x->GetValue());
       // The interval only includes the part which follows exponential distribution;
       tNext = Seconds (x->GetValue());
-      //cout << "Interval time " << tNext << endl;
+      // Terminate the connection if the interval is bigger than one value
+     
+      if (tNext > m_threshold)
+      {
+        // Close the socket; 
+      	m_socket = 0;  
+	// Create a new socket;
+     	m_socket = Socket::CreateSocket (GetNode (), m_tid);
+        m_socket->Bind ();
+        m_socket->Connect (m_peer);
+
+        ostringstream oss;
+        oss << "/NodeList/" << this->GetNode() -> GetId ();
+
+        m_socket->TraceConnect ("CongestionWindow", oss.str(), MakeCallback (&CwndChange));
+      }
+      cout << "/NodeList\t" << this->GetNode() << "\t" << "Interval time\t" << tNext << endl;
       // Time is used to denote delay until the next event should execute.
       m_sendEvent = Simulator::Schedule (tNext, &MyApp::SendPacket, this);
     }
@@ -166,74 +266,6 @@ MyApp::ScheduleTx (void)
    // cout << "start time " << m_startTime << " " << m_stopTime << endl;
 }
 
-//static void
-//CwndChange (uint32_t oldCwnd, uint32_t newCwnd)
-//{
-//  NS_LOG_UNCOND ( index << Simulator::Now ().GetSeconds () << "\t" << newCwnd);
-//}
-
-static void
-CwndChange (std::string context, uint32_t oldCwnd, uint32_t newCwnd)
-{
-  //NS_LOG_UNCOND (context << "\t" << Simulator::Now ().GetSeconds () << "\t" << newCwnd);
-  cout << context << "\t" << Simulator::Now ().GetSeconds () << "\t" << newCwnd << endl;
-}
-
-//static void
-//RxDrop (Ptr<const Packet> p)
-//{
-//  NS_LOG_UNCOND ("RxDrop at " << Simulator::Now ().GetSeconds ());
-//}
-
-// The following are queue related tracing functions.
-// Packet drop event
-static void 
-AsciiDropEvent (std::string path, Ptr<const QueueItem> packet)
-{
-  //NS_LOG_UNCOND ("PacketDrop:\t" << Simulator::Now ().GetNanoSeconds () << "\t" << path << "\t" << *packet);
-  cout << "PacketDrop:\t" << Simulator::Now ().GetNanoSeconds () << "\t" << path << "\t" << *packet << endl;
-//  cout << "aaa" << endl;
-//  *os << "d " << Simulator::Now ().GetSeconds () << " ";
-//  *os << path << " " << *packet << std::endl;
-}
-// Enqueue event
-static void 
-AsciiEnqueueEvent (std::string path, Ptr<const QueueItem> packet)
-{
-  //NS_LOG_UNCOND ("Enqueue\t" << Simulator::Now ().GetNanoSeconds () << "\t" << *packet << *(packet->GetPacket()) );
-  cout << "Enqueue\t" << Simulator::Now ().GetNanoSeconds () << endl;
- // *os << "+ " << Simulator::Now ().GetSeconds () << " ";
- // *os << path << " " << *packet << std::endl;
-}
-
-// Dequeue event
-static void 
-AsciiDequeueEvent (std::string path, Ptr<const QueueItem> packet)
-{
-  // NS_LOG_UNCOND ("Dequeue\t" << Simulator::Now ().GetNanoSeconds () << "\t" << *(packet->GetPacket()) );
-  // NS_LOG_UNCOND ("Dequeue\t" << Simulator::Now ().GetNanoSeconds () );
-  cout << "Dequeue\t" << Simulator::Now ().GetNanoSeconds () << endl;
- // *os << "+ " << Simulator::Now ().GetSeconds () << " ";
- // *os << path << " " << *packet << std::endl;
-}
-
-static void 
-AsciiPacketsInQueue (std::string path, uint32_t oldValue, uint32_t newValue) 
-{
-  //NS_LOG_UNCOND ("BytesInQueue\t" << Simulator::Now ().GetNanoSeconds () << "\t" << newValue);
-  cout << "BytesInQueue\t" << Simulator::Now ().GetNanoSeconds () << "\t" << newValue << endl;
- // *os << "+ " << Simulator::Now ().GetSeconds () << " ";
- // *os << path << " " << *packet << std::endl;
-}
-
-static void 
-AsciiPacketsInQueueNetDevice (std::string path, uint32_t oldValue, uint32_t newValue) 
-{
-  //NS_LOG_UNCOND ("BytesInQueueNetDevice\t" << Simulator::Now ().GetNanoSeconds () << "\t" << newValue);
-  cout << "BytesInQueueNetDevice\t" << Simulator::Now ().GetNanoSeconds () << "\t" << newValue << endl;
- // *os << "+ " << Simulator::Now ().GetSeconds () << " ";
- // *os << path << " " << *packet << std::endl;
-}
 
 string IpBaseGenerator (int index) {
 	int second = 0, third = 0;
@@ -268,8 +300,9 @@ main (int argc, char *argv[])
  // unsigned long long 	CONFIG_OUTPUT_BUFFER_SIZE_BYTES 		=	5242880;
   int 			CONFIG_NUMBER_OF_TERMINALS 			=	atol(argv[1]);
   double 		CONFIG_SENDER_INTERVAL_MEAN 			=	atof(argv[2]);
-  unsigned long long 	CONFIG_OUTPUT_BUFFER_SIZE_BYTES 		=	atol(argv[3]);
-  unsigned long long 	CONFIG_SERVER_LINK_DATA_RATE 			=	atol(argv[4]);
+  double		CONFIG_SENDER_INTERVAL_THRESHOLD		=	atof(argv[3]);
+  unsigned long long 	CONFIG_OUTPUT_BUFFER_SIZE_BYTES 		=	atol(argv[4]);
+  unsigned long long 	CONFIG_SERVER_LINK_DATA_RATE 			=	atol(argv[5]);
 
   CommandLine cmd;
   cmd.AddValue ("CONFIG_NUMBER_OF_TERMINALS", "The number of the senders", CONFIG_NUMBER_OF_TERMINALS 		);
@@ -409,6 +442,14 @@ main (int argc, char *argv[])
   cout << oss.str() << endl;
   Config::Connect (oss.str(), MakeCallback (&AsciiPacketsInQueueNetDevice));
 
+  // This is to log down the dequeue event of the net device.
+  oss.str("");
+  oss.clear();
+  oss << "/NodeList/" << router.Get (0) -> GetId () << "/DeviceList/" << linkServer.Get (1)->GetIfIndex() << "/$ns3::PointToPointNetDevice/TxQueue/Dequeue";
+  //oss << "/NodeList/" << router.Get (0) -> GetId () << "/$ns3::TrafficControlLayer/RootQueueDiscList/" << linkServer.Get (1)->GetIfIndex() << "/BytesInQueue";
+  cout << oss.str() << endl;
+  Config::Connect (oss.str(), MakeCallback (&AsciiDequeueEventNetDevice));
+
    // Create a sink application on the server node to receive these applications. 
    uint16_t port = 50000;
    Address sinkLocalAddress (InetSocketAddress (serverIpv4.GetAddress(0), port));
@@ -439,7 +480,7 @@ main (int argc, char *argv[])
       // number of packets is not used here.
 
       // construct a string to denote the rate
-      ApplicationVector[i]->Setup (SocketVector[i], sinkAddress, CONFIG_SENDER_PACKET_SIZE, 1000, DataRate (string (CONFIG_SENDER_LINK_DATA_RATE)), CONFIG_SENDER_PACKETS_PER_SHORT_FLOW, CONFIG_SENDER_INTERVAL_MEAN, CONFIG_SENDER_INTERVAL_BOUND);
+      ApplicationVector[i]->Setup (SocketVector[i], sinkAddress, CONFIG_SENDER_PACKET_SIZE, 1000, DataRate (string (CONFIG_SENDER_LINK_DATA_RATE)), CONFIG_SENDER_PACKETS_PER_SHORT_FLOW, CONFIG_SENDER_INTERVAL_MEAN, CONFIG_SENDER_INTERVAL_BOUND, CONFIG_SENDER_INTERVAL_THRESHOLD);
       terminals.Get (i)->AddApplication (ApplicationVector[i]);
       clientApps.Add (ApplicationVector[i]);
    }
