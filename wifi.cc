@@ -6,6 +6,9 @@
 #include "ns3/applications-module.h"
 #include "ns3/internet-module.h"
 
+#include "ns3/wifi-module.h"
+#include "ns3/mobility-module.h"
+
 #include "ns3/point-to-point-module.h"
 #include "ns3/net-device.h"
 
@@ -334,15 +337,17 @@ main (int argc, char *argv[])
   // run-time, via command-line arguments
   //
 
- // int 		CONFIG_NUMBER_OF_TERMINALS 			=	500;
- // double 		CONFIG_SENDER_INTERVAL_MEAN 			=	0.0016;
- // unsigned long long 	CONFIG_SERVER_LINK_DATA_RATE 			=	1000000000;
- // unsigned long long 	CONFIG_OUTPUT_BUFFER_SIZE_BYTES 		=	5242880;
-  int 			CONFIG_NUMBER_OF_TERMINALS 			=	atol(argv[1]);
-  double 		CONFIG_SENDER_INTERVAL_MEAN 			=	atof(argv[2]);
-  double		CONFIG_SENDER_INTERVAL_THRESHOLD		=	atof(argv[3]);
-  unsigned long long 	CONFIG_OUTPUT_BUFFER_SIZE_BYTES 		=	atol(argv[4]);
-  unsigned long long 	CONFIG_SERVER_LINK_DATA_RATE 			=	atol(argv[5]);
+  int 			CONFIG_NUMBER_OF_TERMINALS 			=	1;
+  double 		CONFIG_SENDER_INTERVAL_MEAN 			=	0.002;
+  double		CONFIG_SENDER_INTERVAL_THRESHOLD		=	0.004;
+  unsigned long long 	CONFIG_OUTPUT_BUFFER_SIZE_BYTES 		=	100000;
+  unsigned long long 	CONFIG_SERVER_LINK_DATA_RATE 			=	1000000;
+  cout << argc << endl;
+  //int 			CONFIG_NUMBER_OF_TERMINALS 			=	atol(argv[1]);
+  //double 		CONFIG_SENDER_INTERVAL_MEAN 			=	atof(argv[2]);
+  //double		CONFIG_SENDER_INTERVAL_THRESHOLD		=	atof(argv[3]);
+  //unsigned long long 	CONFIG_OUTPUT_BUFFER_SIZE_BYTES 		=	atol(argv[4]);
+  //unsigned long long 	CONFIG_SERVER_LINK_DATA_RATE 			=	atol(argv[5]);
 
   CommandLine cmd;
   cmd.AddValue ("CONFIG_NUMBER_OF_TERMINALS", "The number of the senders", CONFIG_NUMBER_OF_TERMINALS 		);
@@ -351,13 +356,12 @@ main (int argc, char *argv[])
   cmd.AddValue ("CONFIG_OUTPUT_BUFFER_SIZE_BYTES", "The buffer size", CONFIG_OUTPUT_BUFFER_SIZE_BYTES 	);
   cmd.Parse (argc, argv);
 
-  //
-  // Explicitly create the nodes required by the topology (shown above).
   NS_LOG_UNCOND (CONFIG_NUMBER_OF_TERMINALS << " " << CONFIG_SENDER_INTERVAL_MEAN << " " << CONFIG_SENDER_INTERVAL_THRESHOLD << " "  << CONFIG_OUTPUT_BUFFER_SIZE_BYTES << " " << CONFIG_SERVER_LINK_DATA_RATE);
 
   Config::SetDefault("ns3::TcpSocket::SegmentSize", UintegerValue(1448));
   Config::SetDefault("ns3::TcpSocket::SndBufSize", UintegerValue(1310720));
 
+  // Create the nodes;
   int numberOfTerminals = CONFIG_NUMBER_OF_TERMINALS;
   NS_LOG_INFO ("Create sender nodes.");
   NodeContainer terminals;
@@ -370,74 +374,82 @@ main (int argc, char *argv[])
   NodeContainer router;
   router.Create (1);
 
-  // Add internet stack to the terminals
+  // Add internet stack to the terminals;
   InternetStackHelper internet;
   internet.Install (terminals);
   internet.Install (servers);
   internet.Install (router);
 
   NS_LOG_INFO ("Build Topology");
-  // The terminal link
-  PointToPointHelper p2p;
+  NS_LOG_INFO ("Create the wifi devices on terminals and the accessing point");
 
-  p2p.SetDeviceAttribute ("DataRate", StringValue (CONFIG_SENDER_LINK_DATA_RATE));
-  p2p.SetChannelAttribute ("Delay", StringValue (CONFIG_SENDER_LINK_DELAY));
-  p2p.SetQueue("ns3::DropTailQueue", "MaxBytes", UintegerValue(CONFIG_INPUT_BUFFER_SIZE_BYTES), "Mode", EnumValue (DropTailQueue::QUEUE_MODE_BYTES));
+  NodeContainer wifiApNode = router.Get (0);
+  //NodeContainer & wifiStaNodes = terminals; 
 
-  // Create the point to point links from each terminal to the router
-  NetDeviceContainer terminalDevices;
-  NetDeviceContainer routerDevices;
+  YansWifiChannelHelper channel = YansWifiChannelHelper::Default ();
+  YansWifiPhyHelper phy = YansWifiPhyHelper::Default ();
+  phy.SetChannel (channel.Create ());
 
-  vector<Ipv4InterfaceContainer> TerminalIpv4Interface;
-  Ipv4AddressHelper ipv4;
-  for (int i = 0; i < numberOfTerminals; i++) {
-    NetDeviceContainer link = p2p.Install (NodeContainer (terminals.Get (i), router));
-    terminalDevices.Add (link.Get (0));
-    routerDevices.Add (link.Get (1));
-    cout << "Assign ip address to node:" << i << endl;  
-    string ip_string = IpBaseGenerator (i+1); 
-    char ip_char[25];
-    for (unsigned int j = 0; j < ip_string.size(); j++)
-        ip_char[j] = ip_string.at(j);
-    ip_char[ip_string.size()] = '\0';
-    ipv4.SetBase (ip_char, Ipv4Mask("255.255.255.0"));
-    TerminalIpv4Interface.push_back (ipv4.Assign (link));
-  }
+  WifiHelper wifi;
+  wifi.SetRemoteStationManager ("ns3::AarfWifiManager");
+
+  WifiMacHelper mac;
+  Ssid ssid = Ssid ("ns-3-ssid");
+  mac.SetType ("ns3::StaWifiMac",
+               "Ssid", SsidValue (ssid),
+               "ActiveProbing", BooleanValue (false));
+
+  NetDeviceContainer staDevices;
+  //staDevices = wifi.Install (phy, mac, wifiStaNodes);
+  staDevices = wifi.Install (phy, mac, terminals);
+
+  mac.SetType ("ns3::ApWifiMac",
+               "Ssid", SsidValue (ssid));
+
+  NetDeviceContainer apDevices;
+  apDevices = wifi.Install (phy, mac, wifiApNode);
+
+  MobilityHelper mobility;
+
+  mobility.SetPositionAllocator ("ns3::GridPositionAllocator",
+                                 "MinX", DoubleValue (0.0),
+                                 "MinY", DoubleValue (0.0),
+                                 "DeltaX", DoubleValue (5.0),
+                                 "DeltaY", DoubleValue (10.0),
+                                 "GridWidth", UintegerValue (3),
+                                 "LayoutType", StringValue ("RowFirst"));
+
+  mobility.SetMobilityModel ("ns3::RandomWalk2dMobilityModel",
+                             "Bounds", RectangleValue (Rectangle (-50, 50, -50, 50)));
+ // mobility.Install (wifiStaNodes);
+  mobility.Install (terminals);
+
+  mobility.SetMobilityModel ("ns3::ConstantPositionMobilityModel");
+  mobility.Install (wifiApNode);
 
   // The server link
-  // UintegerValue, holds an unsigned integer type.
-  p2p.SetQueue("ns3::DropTailQueue", "MaxBytes", UintegerValue(CONFIG_OUTPUT_BUFFER_SIZE_BYTES), "Mode", EnumValue (DropTailQueue::QUEUE_MODE_BYTES));
-  //p2p.SetQueue("ns3::DropTailQueue", "MaxBytes", UintegerValue (15000), "Mode", EnumValue (DropTailQueue::QUEUE_MODE_BYTES));
+  PointToPointHelper p2p;
+  p2p.SetQueue("ns3::DropTailQueue", "MaxBytes", UintegerValue(CONFIG_INPUT_BUFFER_SIZE_BYTES), "Mode", EnumValue (DropTailQueue::QUEUE_MODE_BYTES));
   p2p.SetDeviceAttribute ("DataRate", DataRateValue (CONFIG_SERVER_LINK_DATA_RATE));
   p2p.SetChannelAttribute ("Delay", StringValue (CONFIG_SERVER_LINK_DELAY));
 
   // Create point to point link, from the server to the bridge
-  NetDeviceContainer serverDevices;
   NetDeviceContainer linkServer = p2p.Install (NodeContainer (servers.Get (0), router));
 
   // Set the size of the TC layer queue
   TrafficControlHelper tch;
   tch.SetRootQueueDisc ("ns3::PfifoFastQueueDisc", "Limit", UintegerValue(10));
-  //tch.SetRootQueueDisc ("ns3::PfifoFastQueueDisc", "Limit", UintegerValue(CONFIG_OUTPUT_BUFFER_SIZE_BYTES/1500 - 10));
-  // tch.AddInternalQueues (handle, 3, "ns3::DropTailQueue", "MaxPackets", UintegerValue (CONFIG_OUTPUT_BUFFER_SIZE_BYTES/1500 - 10));
-  //tch.AddInternalQueues (handle, 3, "ns3::DropTailQueue", "MaxPackets", UintegerValue (100));
   tch.Install(linkServer.Get(1));
 
-  serverDevices.Add (linkServer.Get (0));
-  routerDevices.Add (linkServer.Get (1));
-
-  // We've got the "hardware" in place.  Now we need to add IP addresses.
-  NS_LOG_INFO ("Assign IP Addresses.");
-  string ip_string = IpBaseGenerator (numberOfTerminals + 1); 
-  char ip_char[20];
-  for (unsigned int j = 0; j < ip_string.size(); j++)
-      ip_char[j] = ip_string.at(j);
-  ip_char[ip_string.size()] = '\0';
-  ipv4.SetBase (ip_char, Ipv4Mask("255.255.255.0"));
-  ipv4.Assign (linkServer);
-
+  Ipv4AddressHelper address;
   Ipv4InterfaceContainer serverIpv4; 
-  serverIpv4.Add(ipv4.Assign (serverDevices));
+  address.SetBase ("10.1.64.0", "255.255.192.0");
+  Ipv4InterfaceContainer p2pInterfaces;
+  serverIpv4 = address.Assign (linkServer);
+
+  address.SetBase ("10.2.128.0", "255.255.192.0");
+  address.Assign (staDevices);
+  address.Assign (apDevices);
 
   // Create router nodes.
   Ipv4GlobalRoutingHelper::PopulateRoutingTables ();
@@ -560,4 +572,5 @@ main (int argc, char *argv[])
   Simulator::Destroy ();
   NS_LOG_INFO ("Done.");
 }
+
 
